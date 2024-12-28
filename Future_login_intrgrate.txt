@@ -1,0 +1,166 @@
+If you're not using Django REST Framework (DRF) for the above functions but want to implement user authentication, permissions, and restrictions for these views, while managing authentication through a different app (e.g., a login app), you can integrate Django's built-in authentication framework to enforce these restrictions.
+
+Here's how you can achieve this:
+
+1. Set Up User Authentication in the login App
+Ensure your login app is properly set up for managing user authentication. Use Django's built-in authentication system with django.contrib.auth.
+
+Example of Login View:
+In the login app:
+
+python
+Copy code
+from django.contrib.auth import authenticate, login, logout
+from django.shortcuts import render, redirect
+from django.contrib.auth.decorators import login_required
+
+def login_view(request):
+    if request.method == 'POST':
+        username = request.POST.get('username')
+        password = request.POST.get('password')
+        user = authenticate(request, username=username, password=password)
+        if user is not None:
+            login(request, user)
+            return redirect('dashboard')  # Redirect to a dashboard or home page
+        else:
+            return render(request, 'login.html', {'error': 'Invalid username or password'})
+    return render(request, 'login.html')
+
+def logout_view(request):
+    logout(request)
+    return redirect('login')
+Add templates for login.html and logout functionality.
+
+2. Add Authentication to Views in Other Apps
+Use Django's built-in decorators and middleware to enforce restrictions on the views.
+
+Add @login_required Decorator
+Apply @login_required to the views to ensure only logged-in users can access them:
+
+python
+Copy code
+from django.contrib.auth.decorators import login_required
+from django.shortcuts import render, redirect
+
+@login_required
+def add_bank_details(request):
+    if request.method == 'POST':
+        form = BankDetailsForm(request.POST)
+        if form.is_valid():
+            bank_details = form.save(commit=False)
+            bank_details.bank_rule_mapping = None  # Initially null
+            bank_details.save()
+            return redirect('bank_details_list')
+    else:
+        form = BankDetailsForm()
+
+    return render(request, 'add_bank_details.html', {'form': form})
+
+@login_required
+def bank_details_list(request):
+    # Your existing logic remains the same
+    # Add permission checks here if needed
+    return render(request, 'bank_details_list.html', {})
+3. Set Permissions Based on User Roles
+If you want to restrict access further based on user roles (e.g., admin, manager, etc.), you can use Django's built-in permissions or custom decorators.
+
+Example Using user.is_staff or user.groups:
+python
+Copy code
+from django.http import HttpResponseForbidden
+
+@login_required
+def add_bank_details(request):
+    if not request.user.is_staff:  # Restrict to staff users only
+        return HttpResponseForbidden("You don't have permission to access this page.")
+
+    if request.method == 'POST':
+        form = BankDetailsForm(request.POST)
+        if form.is_valid():
+            bank_details = form.save(commit=False)
+            bank_details.bank_rule_mapping = None
+            bank_details.save()
+            return redirect('bank_details_list')
+    else:
+        form = BankDetailsForm()
+
+    return render(request, 'add_bank_details.html', {'form': form})
+Custom Decorator for Specific Roles:
+You can create a custom decorator to check user roles:
+
+python
+Copy code
+from django.http import HttpResponseForbidden
+from functools import wraps
+
+def role_required(role):
+    def decorator(view_func):
+        @wraps(view_func)
+        def _wrapped_view(request, *args, **kwargs):
+            if not request.user.groups.filter(name=role).exists():
+                return HttpResponseForbidden("You don't have the required role to access this page.")
+            return view_func(request, *args, **kwargs)
+        return _wrapped_view
+    return decorator
+
+@role_required('BankAdmin')  # Restrict to users in the "BankAdmin" group
+def bank_details_list(request):
+    # Your logic
+    return render(request, 'bank_details_list.html', {})
+4. Apply Authentication Middleware
+Django automatically uses authentication middleware (django.contrib.auth.middleware.AuthenticationMiddleware) when django.contrib.auth is included in INSTALLED_APPS. This ensures that the request.user object is populated in all views.
+
+Make sure MIDDLEWARE in your settings.py includes:
+
+python
+Copy code
+MIDDLEWARE = [
+    'django.middleware.security.SecurityMiddleware',
+    'django.contrib.sessions.middleware.SessionMiddleware',
+    'django.middleware.common.CommonMiddleware',
+    'django.middleware.csrf.CsrfViewMiddleware',
+    'django.contrib.auth.middleware.AuthenticationMiddleware',  # Required for user authentication
+    'django.contrib.messages.middleware.MessageMiddleware',
+    'django.middleware.clickjacking.XFrameOptionsMiddleware',
+]
+5. Restrict Access at the URL Level
+You can also restrict URLs based on permissions in urls.py:
+
+python
+Copy code
+from django.urls import path
+from django.contrib.auth.decorators import login_required
+from .views import add_bank_details, bank_details_list
+
+urlpatterns = [
+    path('add-bank-details/', login_required(add_bank_details), name='add_bank_details'),
+    path('bank-details-list/', login_required(bank_details_list), name='bank_details_list'),
+]
+6. Restrict Access to Static Files (Optional)
+If your app serves sensitive static files, ensure they are only accessible to logged-in users by creating a custom view for them:
+
+python
+Copy code
+from django.http import HttpResponse, Http404
+from django.contrib.auth.decorators import login_required
+import os
+
+@login_required
+def protected_static(request, path):
+    file_path = os.path.join('protected_static', path)
+    if os.path.exists(file_path):
+        with open(file_path, 'rb') as file:
+            return HttpResponse(file.read(), content_type='application/octet-stream')
+    raise Http404("File not found")
+7. Configure Authentication in settings.py
+Ensure you have the following configuration in your settings.py:
+
+python
+Copy code
+AUTHENTICATION_BACKENDS = [
+    'django.contrib.auth.backends.ModelBackend',
+]
+
+LOGIN_URL = '/login/'  # Redirect to login page if not authenticated
+LOGIN_REDIRECT_URL = '/dashboard/'  # Where to go after login
+LOGOUT_REDIRECT_URL = '/login/'  # Where to go after logout
